@@ -18,7 +18,7 @@ def get_connection():
         port     = 5432,
         database = "india_location_db",
         user     = "postgres",
-        password = "root"
+        password = "root"   
     )
 
 @st.cache_data
@@ -32,7 +32,7 @@ st.markdown("**Production-grade location data platform | All India Villages**")
 st.divider()
 
 # ── Row 1: KPI Cards ──────────────────────────────────────
-st.subheader("📌 Database Overview")
+st.subheader("Database Overview")
 
 counts = run_query("""
     SELECT
@@ -238,6 +238,111 @@ if selected_state:
     )
     fig5.update_traces(texttemplate="%{text:,}", textposition="outside")
     st.plotly_chart(fig5, use_container_width=True)
+
+st.divider()
+
+# ── Row 6: Village Master List ────────────────────────────
+st.subheader("📋 Village Master List — Data Browser")
+st.markdown("Filter and explore all villages across India")
+
+# Filter Row
+fcol1, fcol2, fcol3, fcol4 = st.columns([2, 2, 2, 2])
+
+# State filter
+all_states = run_query("SELECT name FROM states ORDER BY name")
+state_options = ["All States"] + all_states["name"].tolist()
+selected_filter_state = fcol1.selectbox("Filter by State", state_options, key="master_state")
+
+# District filter — depends on state
+if selected_filter_state != "All States":
+    district_query = f"""
+        SELECT d.name FROM districts d
+        JOIN states s ON s.id = d.state_id
+        WHERE s.name = '{selected_filter_state}'
+        ORDER BY d.name
+    """
+    district_options_df = run_query(district_query)
+    district_options = ["All Districts"] + district_options_df["name"].tolist()
+else:
+    district_options = ["All Districts"]
+selected_filter_district = fcol2.selectbox("Filter by District", district_options, key="master_district")
+
+# Sub-district filter — depends on district
+if selected_filter_district != "All Districts":
+    subdist_query = f"""
+        SELECT sd.name FROM sub_districts sd
+        JOIN districts d ON d.id = sd.district_id
+        WHERE d.name = '{selected_filter_district}'
+        ORDER BY sd.name
+    """
+    subdist_options_df = run_query(subdist_query)
+    subdist_options = ["All Sub-Districts"] + subdist_options_df["name"].tolist()
+else:
+    subdist_options = ["All Sub-Districts"]
+selected_filter_subdist = fcol3.selectbox("Filter by Sub-District", subdist_options, key="master_subdist")
+
+# Village name search
+village_search = fcol4.text_input("Search Village Name", placeholder="e.g. Kondapur")
+
+# Build dynamic query based on filters
+where_clauses = []
+if selected_filter_state != "All States":
+    where_clauses.append(f"s.name = '{selected_filter_state}'")
+if selected_filter_district != "All Districts":
+    where_clauses.append(f"d.name = '{selected_filter_district}'")
+if selected_filter_subdist != "All Sub-Districts":
+    where_clauses.append(f"sd.name = '{selected_filter_subdist}'")
+if village_search:
+    where_clauses.append(f"v.name ILIKE '%{village_search}%'")
+
+where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+master_query = f"""
+    SELECT
+        s.name  AS "State",
+        d.name  AS "District",
+        sd.name AS "Sub-District",
+        v.code  AS "Village Code",
+        v.name  AS "Village Name"
+    FROM villages v
+    JOIN sub_districts sd ON sd.id = v.sub_district_id
+    JOIN districts d      ON d.id  = sd.district_id
+    JOIN states s         ON s.id  = d.state_id
+    {where_sql}
+    ORDER BY s.name, d.name, sd.name, v.name
+    LIMIT 500
+"""
+
+master_df = run_query(master_query)
+
+# Show count
+total_query = f"""
+    SELECT COUNT(*) as total
+    FROM villages v
+    JOIN sub_districts sd ON sd.id = v.sub_district_id
+    JOIN districts d      ON d.id  = sd.district_id
+    JOIN states s         ON s.id  = d.state_id
+    {where_sql}
+"""
+total_count = run_query(total_query)["total"][0]
+
+st.markdown(f"**Showing {len(master_df):,} of {total_count:,} matching villages** (max 500 displayed)")
+
+# Display table
+st.dataframe(
+    master_df,
+    use_container_width=True,
+    height=400
+)
+
+# Download button
+csv_data = master_df.to_csv(index=False).encode("utf-8")
+st.download_button(
+    label="⬇️ Download as CSV",
+    data=csv_data,
+    file_name="villages_filtered.csv",
+    mime="text/csv"
+)
 
 st.divider()
 st.caption("🇮🇳 India Location DB | Data Source: MDDS 2011 Census | Built for B2B API Platform")
